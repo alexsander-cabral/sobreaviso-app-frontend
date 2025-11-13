@@ -8,12 +8,33 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/components/ui/use-toast';
-import { api } from '@/lib/api';              
-import authApi from '@/services/authApi';     
+import { api } from '@/lib/api';
+import authApi from '@/services/authApi';
 import useAuth from '@/store/auth';
 
+// =========================================================
+// Helper: JWT Fake para login em localhost
+// =========================================================
+function createFakeJwt(hours = 24) {
+  const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const exp = Math.floor(Date.now() / 1000) + (hours * 3600);
+  const iat = Math.floor(Date.now() / 1000);
+
+  const payload = btoa(JSON.stringify({
+    sub: "1",
+    name: "Administrador Local",
+    email: "admin@localhost",
+    iat,
+    exp
+  }));
+
+  const signature = "localdevsignature";
+
+  return `${header}.${payload}.${signature}`;
+}
+
 const Login = () => {
-  const [username, setUsername] = useState('');  
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading,  setLoading]  = useState(false);
 
@@ -25,7 +46,10 @@ const Login = () => {
   const doLogin = useAuth(s => s.login);
   const hydrate = useAuth(s => s.hydrate);
 
+  // Carrega sessão se existir
   useEffect(() => { hydrate?.(); }, []);
+
+  // Se já tiver logado, forward automático
   useEffect(() => {
     if (user) {
       const fromState  = location.state?.from?.pathname;
@@ -40,6 +64,42 @@ const Login = () => {
     setLoading(true);
 
     try {
+
+      // =========================================================
+      // 🔐 LOGIN LOCAL (modo desenvolvimento)
+      // =========================================================
+      if (
+        (import.meta.env.DEV || window.location.hostname === "localhost")
+        && username === "admin"
+        && password === "123"
+      ) {
+        const jwt = createFakeJwt();
+
+        const localSession = {
+          user: {
+            id: 1,
+            name: "Administrador Local",
+            email: "admin@localhost",
+            role: "admin",
+          },
+          token: jwt,
+          refreshToken: "local-refresh-token"
+        };
+
+        doLogin(localSession);
+
+        toast({
+          title: 'Login Local',
+          description: `Bem-vindo, Administrador Local!`,
+        });
+
+        setLoading(false);
+        return;
+      }
+
+      // =========================================================
+      // 🔄 LOGIN REAL (AD + backend)
+      // =========================================================
       await authApi.post('login', { username, password });
 
       const session = await api.post('/auth/ad-login', { email: username });
@@ -50,20 +110,22 @@ const Login = () => {
         title: 'Login realizado!',
         description: `Bem-vindo, ${session.user.name}!`,
       });
+
     } catch (err) {
+
       const status = err?.response?.status;
       const msg    = err?.response?.data?.error;
 
       if (status === 404 && msg === 'USER_NOT_FOUND') {
         toast({
           title: 'Acesso não autorizado',
-          description: 'Você autenticou no AD, mas não possui cadastro no sistema. Solicite acesso ao SETISD.',
+          description: 'Você autenticou no AD, mas não possui cadastro no sistema.',
           variant: 'destructive',
         });
       } else if (status === 401) {
         toast({
           title: 'Falha na autenticação',
-          description: 'Usuário ou senha inválidos (AD).',
+          description: 'Usuário ou senha inválidos',
           variant: 'destructive',
         });
       } else {
@@ -73,6 +135,7 @@ const Login = () => {
           variant: 'destructive',
         });
       }
+
     } finally {
       setLoading(false);
     }
@@ -103,7 +166,7 @@ const Login = () => {
             <Label htmlFor="username">Usuário</Label>
             <Input
               id="username"
-              type="text"                
+              type="text"
               placeholder="usuário de rede"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
@@ -138,7 +201,7 @@ const Login = () => {
         <div className="mt-6 p-4 bg-blue-50 rounded-lg">
           <p className="text-sm text-gray-600 text-center">
             <strong>Acesso</strong><br />
-            Use suas credenciais de rede EBSERH. Em caso de dúvida, contate o SETISD.
+            Use suas credenciais de rede EBSERH.
           </p>
         </div>
 
