@@ -1,42 +1,29 @@
 // src/pages/Login.jsx
 import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { LogIn, Shield, Calendar } from 'lucide-react';
+import { LogIn, Shield, Calendar, User, Building2 } from 'lucide-react';
 import { useLocation, useNavigate, useSearchParams, Link } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/use-toast';
-import { api } from '@/lib/api';
-import authApi from '@/services/authApi';
+import { loginLocal, tryDevLogin } from '@/lib/login-local';
+import { loginWithActiveDirectory } from '@/lib/login-ad';
 import useAuth from '@/store/auth';
 
-// =========================================================
-// Helper: JWT Fake para login em localhost
-// =========================================================
-function createFakeJwt(hours = 24) {
-  const header = btoa(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const exp = Math.floor(Date.now() / 1000) + (hours * 3600);
-  const iat = Math.floor(Date.now() / 1000);
-
-  const payload = btoa(JSON.stringify({
-    sub: "1",
-    name: "Administrador Local",
-    email: "admin@localhost",
-    iat,
-    exp
-  }));
-
-  const signature = "localdevsignature";
-
-  return `${header}.${payload}.${signature}`;
-}
-
 const Login = () => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [loading,  setLoading]  = useState(false);
+  // Estados para Login Local
+  const [localEmail, setLocalEmail] = useState('');
+  const [localPassword, setLocalPassword] = useState('');
+
+  // Estados para Login AD
+  const [adUsername, setAdUsername] = useState('');
+  const [adPassword, setAdPassword] = useState('');
+
+  const [loading, setLoading] = useState(false);
+  const [loginType, setLoginType] = useState('local');
 
   const navigate  = useNavigate();
   const location  = useLocation();
@@ -59,83 +46,44 @@ const Login = () => {
     }
   }, [user, location.state, searchParams, navigate]);
 
-  const handleSubmit = async (e) => {
+  // Handler para Login Local
+  const handleLocalLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-
-      // =========================================================
-      // 🔐 LOGIN LOCAL (modo desenvolvimento)
-      // =========================================================
-      if (
-        (import.meta.env.DEV || window.location.hostname === "localhost")
-        && username === "admin"
-        && password === "123"
-      ) {
-        const jwt = createFakeJwt();
-
-        const localSession = {
-          user: {
-            id: 1,
-            name: "Administrador Local",
-            email: "admin@localhost",
-            role: "admin",
-          },
-          token: jwt,
-          refreshToken: "local-refresh-token"
-        };
-
-        doLogin(localSession);
-
+      // Tenta login de desenvolvimento primeiro
+      const devSession = tryDevLogin(localEmail, localPassword);
+      if (devSession) {
+        doLogin(devSession);
         toast({
-          title: 'Login Local',
-          description: `Bem-vindo, Administrador Local!`,
+          title: 'Login Local (Dev)',
+          description: 'Bem-vindo, Administrador Local!',
         });
-
-        setLoading(false);
         return;
       }
 
-      // =========================================================
-      // 🔄 LOGIN REAL (AD + backend)
-      // =========================================================
-      await authApi.post('login', { username, password });
-
-      const session = await api.post('/auth/ad-login', { email: username });
-
-      doLogin(session);
-
-      toast({
-        title: 'Login realizado!',
-        description: `Bem-vindo, ${session.user.name}!`,
-      });
+      // Login local real via API
+      await loginLocal(localEmail, localPassword);
 
     } catch (err) {
+      // Erros já são tratados dentro de loginLocal
+      console.error('Erro no login local:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-      const status = err?.response?.status;
-      const msg    = err?.response?.data?.error;
+  // Handler para Login AD
+  const handleAdLogin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
 
-      if (status === 404 && msg === 'USER_NOT_FOUND') {
-        toast({
-          title: 'Acesso não autorizado',
-          description: 'Você autenticou no AD, mas não possui cadastro no sistema.',
-          variant: 'destructive',
-        });
-      } else if (status === 401) {
-        toast({
-          title: 'Falha na autenticação',
-          description: 'Usuário ou senha inválidos',
-          variant: 'destructive',
-        });
-      } else {
-        toast({
-          title: 'Erro no login',
-          description: err?.message || 'Não foi possível autenticar.',
-          variant: 'destructive',
-        });
-      }
-
+    try {
+      await loginWithActiveDirectory(adUsername, adPassword);
+    } catch (err) {
+      // Erros já são tratados dentro de loginWithActiveDirectory
+      console.error('Erro no login AD:', err);
     } finally {
       setLoading(false);
     }
@@ -161,51 +109,114 @@ const Login = () => {
           <p className="text-gray-600">Faça login para gerenciar as escalas</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div className="space-y-2">
-            <Label htmlFor="username">Usuário</Label>
-            <Input
-              id="username"
-              type="text"
-              placeholder="usuário de rede"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              className="h-12"
-              disabled={loading}
-              autoComplete="username"
-            />
-          </div>
+        <Tabs value={loginType} onValueChange={setLoginType} className="w-full">
+          <TabsList className="w-full grid grid-cols-2 mb-6">
+            <TabsTrigger value="local" className="gap-2">
+              <User className="w-4 h-4" />
+              Login Local
+            </TabsTrigger>
+            <TabsTrigger value="ad" className="gap-2">
+              <Building2 className="w-4 h-4" />
+              Active Directory
+            </TabsTrigger>
+          </TabsList>
 
-          <div className="space-y-2">
-            <Label htmlFor="password">Senha</Label>
-            <Input
-              id="password"
-              type="password"
-              placeholder="••••••••"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="h-12"
-              disabled={loading}
-              autoComplete="current-password"
-            />
-          </div>
+          {/* Tab: Login Local */}
+          <TabsContent value="local">
+            <form onSubmit={handleLocalLogin} className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="local-email">Email</Label>
+                <Input
+                  id="local-email"
+                  type="email"
+                  placeholder="seu@email.com"
+                  value={localEmail}
+                  onChange={(e) => setLocalEmail(e.target.value)}
+                  required
+                  className="h-12"
+                  disabled={loading}
+                  autoComplete="email"
+                />
+              </div>
 
-          <Button type="submit" className="w-full h-12 text-lg" size="lg" disabled={loading}>
-            <LogIn className="w-5 h-5 mr-2" />
-            {loading ? 'Entrando...' : 'Entrar'}
-          </Button>
-        </form>
+              <div className="space-y-2">
+                <Label htmlFor="local-password">Senha</Label>
+                <Input
+                  id="local-password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={localPassword}
+                  onChange={(e) => setLocalPassword(e.target.value)}
+                  required
+                  className="h-12"
+                  disabled={loading}
+                  autoComplete="current-password"
+                />
+              </div>
 
-        <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-          <p className="text-sm text-gray-600 text-center">
-            <strong>Acesso</strong><br />
-            Use suas credenciais de rede EBSERH.
-          </p>
-        </div>
+              <Button type="submit" className="w-full h-12 text-lg" size="lg" disabled={loading}>
+                <LogIn className="w-5 h-5 mr-2" />
+                {loading ? 'Entrando...' : 'Entrar'}
+              </Button>
+            </form>
 
-        <div className="flex justify-center">
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+              <p className="text-sm text-gray-600 text-center">
+                <strong>Login Local</strong><br />
+                Use suas credenciais locais do sistema.
+              </p>
+            </div>
+          </TabsContent>
+
+          {/* Tab: Login Active Directory */}
+          <TabsContent value="ad">
+            <form onSubmit={handleAdLogin} className="space-y-6">
+              <div className="space-y-2">
+                <Label htmlFor="ad-username">Usuário de Rede</Label>
+                <Input
+                  id="ad-username"
+                  type="text"
+                  placeholder="usuário de rede"
+                  value={adUsername}
+                  onChange={(e) => setAdUsername(e.target.value)}
+                  required
+                  className="h-12"
+                  disabled={loading}
+                  autoComplete="username"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="ad-password">Senha</Label>
+                <Input
+                  id="ad-password"
+                  type="password"
+                  placeholder="••••••••"
+                  value={adPassword}
+                  onChange={(e) => setAdPassword(e.target.value)}
+                  required
+                  className="h-12"
+                  disabled={loading}
+                  autoComplete="current-password"
+                />
+              </div>
+
+              <Button type="submit" className="w-full h-12 text-lg" size="lg" disabled={loading}>
+                <LogIn className="w-5 h-5 mr-2" />
+                {loading ? 'Entrando...' : 'Entrar'}
+              </Button>
+            </form>
+
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+              <p className="text-sm text-gray-600 text-center">
+                <strong>Active Directory</strong><br />
+                Use suas credenciais de rede EBSERH.
+              </p>
+            </div>
+          </TabsContent>
+        </Tabs>
+
+        <div className="flex justify-center mt-6">
           <Button asChild variant="ghost" size="sm" className="h-8 px-2 text-slate-600 hover:text-slate-900">
             <Link to="/" title="Ver plantonistas">
               <Calendar className="w-3.5 h-3.5 mr-1" />
